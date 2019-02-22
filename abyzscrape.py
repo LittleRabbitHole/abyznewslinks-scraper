@@ -4,19 +4,54 @@ import requests, time, sys
 import pandas as pd
 from bs4 import BeautifulSoup
 import cache
+from urllib.request import Request, urlopen
+from urllib.parse import quote
+import pandas as pd
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 # may take a while to run the first time
 # caches every country page with a 1-second delay
 sys.setrecursionlimit(2500) # so many <br> tags. oceans of <br>. html.parser hates <br>. worst cases: california, argentina
 BS_PARSER = "html.parser" 
-ROOTURL = u'http://www.abyznewslinks.com/'
+ROOTURL = 'http://www.abyznewslinks.com/'
 RUN = True # switch this to true to run script
 
-def fetch_webpage_text(url, use_cache=True):
+
+def fetch_webpage_text2(url, use_cache=True):
+    url = url.encode('utf-8')
     if use_cache and cache.contains(url):
         return cache.get(url)
     # if cache miss, download it and sleep one second to prevent too-frequent calls
     content = requests.get(url).text
+    cache.put(url,content)
+    time.sleep(1)
+    return content
+
+
+def fetch_webpage_text(url, use_cache=True):
+    #set session
+    session = requests.Session()
+    retry = Retry(connect=3, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+
+    #use session to retrive data
+    #site= "https://xtools.wmflabs.org/articleinfo/en.wikipedia.org/Black%20Lives%20Matter"
+    hdr = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11',
+           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+           'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.3',
+           'Accept-Encoding': 'none',
+           'Accept-Language': 'en-US,en;q=0.8',
+           'Connection': 'keep-alive'}
+    
+    url = url.encode('utf-8')
+    if use_cache and cache.contains(url):
+        return cache.get(url)
+    
+    req = session.get(url, headers=hdr) #{'User-Agent': 'Mozilla/5.0'}
+    content = req.text
     cache.put(url,content)
     time.sleep(1)
     return content
@@ -31,7 +66,7 @@ def getcountries():
     
     # need to get all the subtrees, for countries that have regional subpages
     for country in countrydict.keys():
-        print country
+        print (country)
         suburl = ROOTURL + countrydict[country][0]
         countrysand = BeautifulSoup(fetch_webpage_text(suburl), BS_PARSER)
         tables = countrysand.find_all('table')
@@ -56,9 +91,9 @@ def getcountries():
 def mediasources(country, url, subcountry=None):
     # get pandas dataframe of all media sources on a page
     
-    print country, subcountry
+    print (country, subcountry)
 
-    sand = BeautifulSoup(fetch_webpage_text(url), BS_PARSER, from_encoding="UTF-8")
+    sand = BeautifulSoup(fetch_webpage_text(url), BS_PARSER)
     tables = sand.find_all('table')
     
     datatables = []
@@ -83,56 +118,59 @@ def mediasources(country, url, subcountry=None):
         # so we split by <br> tag
         # get mediatype, mediafocus, language, region columns
         # but also sometimes <br> is just missing - if so, attempt to split by \n as well (see Florida table, in "media type" column)
-        typestring = unicode(cells[2])
-        if typestring.find('<br>') == -1:
+        typestring = str(cells[2])
+        if typestring.find('<br/>') == -1:
             mediatype = [cells[2].get_text().strip()] # only one entry
         else:
-            mediatype = [r.strip() for r in typestring[typestring[:typestring.find('<br>')].rfind('>') + 1:typestring.find('</br>')].split('<br>')]
+            mediatype = [r.strip() for r in typestring[typestring[:typestring.find('<br/>')].rfind('>') + 1:typestring.find('</font>')].split('<br/>')]
         if max([len(t) for t in mediatype]) > 2: # unsuccessful splitting by <br>
             mediatype = [t.split('\n') if len(t) > 2 else [t] for t in mediatype] # attempt to split by '\n'
             mediatype = [t for cell in mediatype for t in cell] # collapse to one-layer list
         
-        focusstring = unicode(cells[3])
-        if focusstring.find('<br>') == -1:
+        focusstring = str(cells[3])
+        if focusstring.find('<br/>') == -1:
             mediafocus = [cells[3].get_text().strip()] # only one entry
         else:
-            mediafocus = [r.strip() for r in focusstring[focusstring[:focusstring.find('<br>')].rfind('>') + 1:focusstring.find('</br>')].split('<br>')]
+            mediafocus = [r.strip() for r in focusstring[focusstring[:focusstring.find('<br/>')].rfind('>') + 1:focusstring.find('</font>')].split('<br/>')]
         if max([len(t) for t in mediafocus]) > 2: # unsuccessful splitting by <br>
             mediafocus = [t.split('\n') if len(t) > 2 else [t] for t in mediafocus] # attempt to split by '\n'
             mediafocus = [t for cell in mediafocus for t in cell] # collapse to one-layer list
                 
-        languagestring = unicode(cells[4])
-        if languagestring.find('<br>') == -1:
+        languagestring = str(cells[4])
+        if languagestring.find('<br/>') == -1:
             language = [cells[4].get_text().strip()] # only one entry
         else:
-            language = [r.strip() for r in languagestring[languagestring[:languagestring.find('<br>')].rfind('>') + 1:languagestring.find('</br>')].split('<br>')]
+            language = [r.strip() for r in languagestring[languagestring[:languagestring.find('<br/>')].rfind('>') + 1:languagestring.find('</font>')].split('<br/>')]
         if max([len(t) for t in language]) > 3: # unsuccessful splitting by <br>
             language = [t.split('\n') if len(t) > 3 else [t] for t in language] # attempt to split by '\n'
             language = [t for cell in language for t in cell] # collapse to one-layer list
+            language = [t.split(' ') if len(t) > 3 else [t] for t in language] # attempt to split by '\n'
+            language = [t for cell in language for t in cell] # collapse to one-layer list
         
-        regionstring = unicode(cells[0])
-        if regionstring.find('<br>') == -1:
+        regionstring = str(cells[0])
+        if regionstring.find('<br/>') == -1:
             region = [cells[0].get_text().strip()] # only one entry
         else:
-            region = [r.strip() for r in regionstring[regionstring[:regionstring.find('<br>')].rfind('>') + 1:regionstring.find('</br>')].split('<br>')]    
+            region = [r.strip() for r in regionstring[regionstring[:regionstring.find('<br/>')].rfind('>') + 1:regionstring.find('</font>')].split('<br/>')]    
         
         # get all the site names and links, row by row, inserting empty strings if there is no <a> tag in that row
-        newentries = unicode(cells[1]).split('br>') # sometimes there's a typo where </br> is used instead of <br> - looking at you, El Zonda in Argentina
+        newentries = str(cells[1]).split('<br/>') # sometimes there's a typo where </br> is used instead of <br> - looking at you, El Zonda in Argentina
         if '</' in newentries:
             newentries = newentries[:newentries.index('</')] # exclude all the closing tags at the end
         elif '</font>\n</td>' in newentries:
             newentries = newentries[:newentries.index('</font>\n</td>')]
         
         name = [BeautifulSoup(i, BS_PARSER).find('a').get_text() if BeautifulSoup(i, BS_PARSER).find('a') else u'' for i in newentries]
+        name = [x.replace("\n","") for x in name]
         link = [BeautifulSoup(i, BS_PARSER).find('a').get('href') if BeautifulSoup(i, BS_PARSER).find('a') else u'' for i in newentries]
         
         # need to check if notes column is empty
         # if empty, will be fixed in the "normalize column lengths" block below
         if len(cells[5].get_text().strip()) != 0: 
-            notestring = unicode(cells[5]).replace('\n','')
+            notestring = str(cells[5]).replace('\n','')
             notestring = notestring[notestring.find('"2">')+4:] # remove prefix tags
             notestring = notestring[:notestring.find('</')] # remove trailing tags
-            notes = [r for r in notestring.split('<br>')] # split by <br> tags
+            notes = [r for r in notestring.split('<br/>')] # split by <br> tags
             # this sometimes returns a list that's shorter than the others
             # because the notes column doesn't necessarily have an entry for every row
             # we'll fix this in the "normalize column lengths" block below
@@ -190,13 +228,13 @@ def mediasources(country, url, subcountry=None):
         # safety check that all lists are still same length
         l = len(language)
         if not (len(name) == l and len(link) == l and len(mediatype) == l and len(mediafocus) == l and len(region) == l and len(notes) == l):
-            print language, ' length: ', l
-            print region, ' length: ', len(language)
-            print name, 'length:', len(name)
-            print notes, 'length:', len(notes)
-            print link, 'length:', len(link)
-            print mediatype, 'length:', len(mediatype)
-            print mediafocus, 'length:', len(mediafocus)
+            print (language, ' length: ', l)
+            print (region, ' length: ', len(language))
+            print (name, 'length:', len(name))
+            print (notes, 'length:', len(notes))
+            print (link, 'length:', len(link))
+            print (mediatype, 'length:', len(mediatype))
+            print (mediafocus, 'length:', len(mediafocus))
             raise ValueError("table columns are different lengths!")
         
         # append to table
@@ -226,18 +264,18 @@ def mediasources(country, url, subcountry=None):
     alldata['subcountry'] = subcountry
     alldata['country'] = country
     
-    print 'DONE'
+    print ('DONE')
     return alldata
 
 if __name__ == "__main__" and RUN == True:
     countrydict = getcountries() 
     
     allframes = []
-    for country, sub in countrydict.iteritems():
+    for country, sub in countrydict.items():
         if len(sub) == 1:
             allframes += [mediasources(country, ROOTURL + sub[0])]
         else:
-            for region, url in sub[1].iteritems():
+            for region, url in sub[1].items():
                 allframes += [mediasources(country, ROOTURL + url[0], subcountry=region)]
     
     allmedia = pd.concat(allframes)
@@ -295,8 +333,8 @@ if __name__ == "__main__" and RUN == True:
                         'YT': 'youth'
                             }
 
-    allmedia['media_type'] = [mediatypelegend[i] for i in allmedia['media_type']]
-    allmedia['media_focus'] = [mediafocuslegend[i] for i in allmedia['media_focus']]
+    allmedia['media_type'] = [mediatypelegend.get(i) for i in allmedia['media_type']]
+    allmedia['media_focus'] = [mediafocuslegend.get(i) for i in allmedia['media_focus']]
     
     allmedia.to_csv('mediasources.csv', encoding = 'utf-8')
     allmedia.reset_index().to_json('mediasources.json', force_ascii = False, orient = 'records')
